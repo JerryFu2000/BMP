@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">BMP</string>
+    <string name="addpic">加载</string>
+    <string name="takephoto">拍照</string>
+    <string name="blackwhite">黑白</string>
+    <string name="save">保存</string>
+    <string name="txtpic">指纹</string>
+</resources>
