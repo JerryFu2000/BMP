@@ -32,6 +32,7 @@ import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.text.format.DateFormat;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -40,9 +41,12 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.FjUtils.BitmapQuMo;
+import com.FjUtils.CountryUtils;
 import com.FjUtils.FileUtils;
+import com.FjUtils.FjIntentUtils;
+import com.FjUtils.LocationUtils;
 import com.FjUtils.SDCardUtils;
-import com.FjUtils.TimeUtils;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -53,13 +57,25 @@ import java.util.Locale;
 
 
 import static android.app.PendingIntent.getActivity;
+import static android.graphics.Bitmap.CompressFormat.JPEG;
 import static android.graphics.ImageDecoder.decodeBitmap;
+
+import com.blankj.utilcode.util.DeviceUtils;
+import com.blankj.utilcode.util.EncodeUtils;
+import com.blankj.utilcode.util.ImageUtils;
+import com.blankj.utilcode.util.RomUtils;
+import com.blankj.utilcode.util.SPStaticUtils;
+import com.blankj.utilcode.util.SPUtils;
+import com.blankj.utilcode.util.TimeUtils;
+import com.jakewharton.rxbinding3.view.RxView;
+import com.jakewharton.rxbinding3.widget.RxSeekBar;
 import com.nestia.biometriclib.BiometricPromptManager;
 import com.tbruyelle.rxpermissions2.RxPermissions;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
 import butterknife.OnClick;
+import io.reactivex.functions.Consumer;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -67,21 +83,20 @@ public class MainActivity extends AppCompatActivity {
 
     final RxPermissions rxPermissions = new RxPermissions(this);
 
-    private static final int CHOOSE_PHOTO = 0;
-    private static final int TAKE_PHOTO = 1;
-
-    private SeekBar seekBar = null;
+    private static final int ReturnFromActivity_CHOOSE_PHOTO = 0;
+    private static final int ReturnFromActivity_TAKE_PHOTO = 1;
+    private static final int ReturnFromActivity_GPS = 2;
 
     private Uri imageUri;
 
-    private Bitmap bitmap;
-    private Bitmap bitmap_blackwhite;
+    private Bitmap bitmap_original;     //原始图片
+    private Bitmap bitmap_blackwhite;   //转换后的黑白图片
 
     private BiometricPromptManager mManager;
 
 
 
-
+//通过butterknife来初始化布局中的控件
     @BindView(R.id.img_path)
     public TextView imgPath;
 
@@ -91,6 +106,8 @@ public class MainActivity extends AppCompatActivity {
     @BindView(R.id.imgShow)
     public ImageView imgShow;
 
+    @BindView(R.id.seekbar_yuzhi)
+    public SeekBar seekBar;
 
     @OnClick(R.id.btn_add)
     public void gotoChoosePhoto(){
@@ -98,41 +115,46 @@ public class MainActivity extends AppCompatActivity {
         Intent intent = new Intent(
                 Intent.ACTION_PICK,
                 android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
-        startActivityForResult(intent, CHOOSE_PHOTO);
+        startActivityForResult(intent, ReturnFromActivity_CHOOSE_PHOTO);
     }
 
     @OnClick(R.id.btn_blackwhite)
-    public void tBlackWhite(){
-        //转成黑白图片
-        int yuzhi = Integer.parseInt(editText.getText().toString(), 10);
-        Log.d(TAG, "阈值="+yuzhi);
-        bitmap_blackwhite = convertToBlackWhite(bitmap, yuzhi);
-        Log.d(TAG, "转成黑白图片成功! Height="+bitmap_blackwhite.getHeight()+" Width="+bitmap_blackwhite.getWidth());
-        //显示得到bitmap图片
-        imgShow.setImageBitmap(bitmap_blackwhite);
+    public void transformBlackWhite(){
+        if(bitmap_original!=null) {
+            //将文本转换为十进制数值
+            int yuzhi = Integer.parseInt(editText.getText().toString(), 10);
+            Log.d(TAG, "阈值=" + yuzhi);
+            //按指定的灰度阈值来转成黑白图片
+            bitmap_blackwhite = BitmapQuMo.convertToBlackWhite(TAG, bitmap_original, yuzhi, 128 * 4, 64 * 4);
+            Log.d(TAG, "转成黑白图片成功! Height=" + bitmap_blackwhite.getHeight() + " Width=" + bitmap_blackwhite.getWidth());
+            //显示得到黑白图片
+            imgShow.setImageBitmap(bitmap_blackwhite);
+        }
     }
 
     @OnClick(R.id.btn_takephoto)
-    public void tTakePhoto(){
+    public void doTakePhoto(){
         takePhoto();
     }
 
     @OnClick(R.id.btn_save)
-    public void savePic(){
+    public void doSavePic(){
         //若已转换，就保存黑白图片
         if(bitmap_blackwhite!=null) {
             String str = saveImageBitmap(bitmap_blackwhite);
             //获取Bitmap中的数据字节，并打印输出
-            //byte[] byte_i = getBitmapBytes(bitmap_blackwhite);
-            //printHexString("黑白图片的字节=",byte_i);
+            byte[] byte_i = BitmapQuMo.getBlackWhiteBmpBytes(bitmap_blackwhite);
+            BitmapQuMo.printHexString(TAG,"黑白图片的字节=",byte_i);
             Toast.makeText(MainActivity.this, "黑白图片已保存:"+str, Toast.LENGTH_LONG).show();
         }
         //若尚未转换，就保存原始图片
-        else if(bitmap!=null){
-            String str = saveImageBitmap(bitmap);
+        else if(bitmap_original!=null){
+            String str = saveImageBitmap(bitmap_original);
             //获取Bitmap中的数据字节，并打印输出
+            //byte[] byte_i = ImageUtils.bitmap2Bytes(bitmap_original,JPEG);
+            //ImageUtils.save(bitmap_original,);
             //byte[] byte_i = getBitmapBytes(bitmap);
-            //printHexString("原始图片的字节=",byte_i);
+            //BitmapQuMo.printHexString(TAG,"原始图片的字节=",byte_i);
             Toast.makeText(MainActivity.this, "原始图片已保存:"+str, Toast.LENGTH_LONG).show();
         }
         String string1 = FileUtils.getStoragePath(MainActivity.this,false);
@@ -149,7 +171,10 @@ public class MainActivity extends AppCompatActivity {
         FP();
     }
 
-
+    @OnClick(R.id.btn_login)
+    public void gotoLogin(){
+        //startActivity(new Intent(this, LoginActivity.class));
+    }
 
 
     @Override
@@ -159,7 +184,7 @@ public class MainActivity extends AppCompatActivity {
         //绑定初始化ButterKnife
         ButterKnife.bind(this);
         //因为ButterKnife对SeekBar不支持，所以需要按通常方式来处理
-        seekBar = (SeekBar) findViewById(R.id.seekbar_yuzhi);
+        //seekBar = (SeekBar) findViewById(R.id.seekbar_yuzhi);
         seekBar.setOnSeekBarChangeListener(seekBarChangeListener);
 
         //判断SD卡是否存在
@@ -175,64 +200,77 @@ public class MainActivity extends AppCompatActivity {
         mManager = BiometricPromptManager.from(this);
         //在文本框显示指纹的相关信息
         imgPath.setText(preFP());
+
+        if(SPUtils.getInstance().getString("PASSWORD").equals("")) {
+            Toast.makeText(this, "密码不存在，初始化为 12345678", Toast.LENGTH_LONG).show();
+            SPUtils.getInstance().put("PASSWORD","12345678",false);
+        }
+        else {
+            String string = SPUtils.getInstance().getString("PASSWORD");
+            Toast.makeText(this, "密码="+string, Toast.LENGTH_LONG).show();
+        }
     }
 
     private void requestPermissions() {
         RxPermissions rxPermissions = new RxPermissions(MainActivity.this);
         rxPermissions
-                .requestEach(Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            //依次请求每一个权限，然后依次发射“权限请求的结果”即permission事件 给观察者
+            .requestEach(Manifest.permission.WRITE_EXTERNAL_STORAGE,
                         Manifest.permission.ACCESS_FINE_LOCATION)
-                .subscribe(permission -> { // will emit 2 Permission objects
-                    if (permission.granted) {
-                        // I can control the camera now
-                        Toast.makeText(this, "用户已授权\n"+permission.name, Toast.LENGTH_LONG).show();
-                        Log.d(TAG, "用户已授权\n"+permission.name);
-                        if(permission.name.equals("android.permission.ACCESS_FINE_LOCATION")){
-                            //若 当前设备的API_Level>=23(M版) 且 GPS未打开
-                            //则弹出对话框，提示用户去打开Android系统内部的“定位设置界面”去打开GPS
-                            if ( (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) && (!checkGPSIsOpen()) ) {
-                                //构建对话框
-                                new AlertDialog.Builder(this)
-                                        .setTitle("提示")
-                                        .setMessage("当前手机扫描蓝牙需要打开定位功能")
-                                        //若按下“取消键”则直接finish()
-                                        .setNegativeButton("取消",
-                                                new DialogInterface.OnClickListener() {
-                                                    @Override
-                                                    public void onClick(DialogInterface dialog, int which) {
-                                                        finish();
-                                                    }
-                                                })
-                                        //若按下“前往设置”则
-                                        .setPositiveButton("前往设置",
-                                                new DialogInterface.OnClickListener() {
-                                                    @Override
-                                                    public void onClick(DialogInterface dialog, int which) {
-                                                        //构建Intent
-                                                        //此处是跳转到Android系统内部的“定位设置界面”
-                                                        Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
-                                                        //启动新的Activity，并携带请求码=REQUEST_CODE_OPEN_GPS
-                                                        //这样当新Activity销毁时会返回数据及此请求码并回调本Activity的onActivityResult()
-                                                        startActivityForResult(intent, 1);
-                                                    }
-                                                })
-                                        //不显示第三个按键
-                                        .setCancelable(false)
-                                        //显示对话框
-                                        .show();
-
-                                //openGPS(this);  //强行打开GPS的方法不行！！！
-                            }
+            //被观察者订阅
+            .subscribe(permission -> {
+                //若本次permission事件是“批准权限”
+                if (permission.granted) {
+                    Toast.makeText(this, "用户已授权\n"+permission.name, Toast.LENGTH_LONG).show();
+                    Log.d(TAG, "用户已授权\n"+permission.name);
+                    if(permission.name.equals("android.permission.ACCESS_FINE_LOCATION")){
+                        //若 当前设备的API_Level>=23(M版) 且 GPS未打开
+                        //则弹出对话框，提示用户去打开Android系统内部的“定位设置界面”去打开GPS
+                        if ( (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) && (!checkGPSIsOpen()) ) {
+                            //构建对话框
+                            new AlertDialog.Builder(this)
+                                    .setTitle("提示")
+                                    .setMessage("当前手机扫描蓝牙需要打开定位功能")
+                                    //若按下“取消键”则直接finish()
+                                    .setNegativeButton("取消",
+                                            new DialogInterface.OnClickListener() {
+                                                @Override
+                                                public void onClick(DialogInterface dialog, int which) {
+                                                    finish();
+                                                }
+                                            })
+                                    //若按下“前往设置”则
+                                    .setPositiveButton("前往设置",
+                                            new DialogInterface.OnClickListener() {
+                                                @Override
+                                                public void onClick(DialogInterface dialog, int which) {
+                                                    //构建Intent
+                                                    //此处是跳转到Android系统内部的“定位设置界面”
+                                                    Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+                                                    //启动新的Activity，并携带请求码=REQUEST_CODE_OPEN_GPS
+                                                    //这样当新Activity销毁时会返回数据及此请求码并回调本Activity的onActivityResult()
+                                                    startActivityForResult(intent, ReturnFromActivity_GPS);
+                                                }
+                                            })
+                                    //不显示第三个按键
+                                    .setCancelable(false)
+                                    //显示对话框
+                                    .show();
                         }
-
-                    } else if (permission.shouldShowRequestPermissionRationale) {
-                        Toast.makeText(this, "用户本次没有授权，下次继续申请\n"+permission.name, Toast.LENGTH_LONG).show();
-                        Log.d(TAG, "用户本次没有授权，下次继续申请\n"+permission.name);
-                     } else {
-                        Toast.makeText(this, "用户彻底不授权\n"+permission.name, Toast.LENGTH_LONG).show();
-                        Log.d(TAG, "用户彻底不授权\n"+permission.name);
                     }
-                });
+
+                }
+                //若本次permission事件是“临时禁止权限”
+                else if (permission.shouldShowRequestPermissionRationale) {
+                    Toast.makeText(this, "用户本次没有授权，下次继续申请\n"+permission.name, Toast.LENGTH_LONG).show();
+                    Log.d(TAG, "用户本次没有授权，下次继续申请\n"+permission.name);
+                }
+                //若本次permission事件是“永久禁止权限”
+                else {
+                    Toast.makeText(this, "用户永久禁止权限\n"+permission.name, Toast.LENGTH_LONG).show();
+                    Log.d(TAG, "用户永久禁止权限\n"+permission.name);
+                }
+            });
     }
 
     //滑动条的监听
@@ -250,13 +288,7 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void onStopTrackingTouch(SeekBar seekBar) {
-            //转成黑白图片
-            int yuzhi = Integer.parseInt(editText.getText().toString(), 10);
-            Log.d(TAG, "阈值="+yuzhi);
-            bitmap_blackwhite = convertToBlackWhite(bitmap, yuzhi);
-            Log.d(TAG, "转成黑白图片成功! Height="+bitmap_blackwhite.getHeight()+" Width="+bitmap_blackwhite.getWidth());
-            //显示得到bitmap图片
-            imgShow.setImageBitmap(bitmap_blackwhite);
+            transformBlackWhite();
         }
     };
 
@@ -267,7 +299,7 @@ public class MainActivity extends AppCompatActivity {
         //判断是从哪个Activity返回
         switch (requestCode){
             //若是从“相册”返回
-            case CHOOSE_PHOTO:
+            case ReturnFromActivity_CHOOSE_PHOTO:
                 Log.d(TAG, "是从相册返回");
                 //if(requestCode==RESULT_OK){
                     if(Build.VERSION.SDK_INT>=19){
@@ -277,41 +309,51 @@ public class MainActivity extends AppCompatActivity {
 
                         Log.d(TAG, "imagePath=" + imagePath);
                         //对指定的图片路径进行解码获得Bitmap对象
-                        bitmap = BitmapFactory.decodeFile(imagePath);
+                        bitmap_original = BitmapFactory.decodeFile(imagePath);
                         //在ImageView控件上显示该图片
-                        imgShow.setImageBitmap(bitmap);
+                        imgShow.setImageBitmap(bitmap_original);
                         imgPath.setText(imagePath);
 
                         bitmap_blackwhite = null;
                     }
                 //}
-                Log.d(TAG, "显示图片完成 Height="+bitmap.getHeight()+" Width="+bitmap.getWidth());
+                Log.d(TAG, "显示图片完成 Height="+bitmap_original.getHeight()+" Width="+bitmap_original.getWidth());
                 File[] files = getExternalFilesDirs(Environment.MEDIA_MOUNTED);
                 for(File file:files) {
                     Log.e(TAG, "得到的全部外存：" + String.valueOf(file));
                 }
-                    break;
+                break;
 
 
             //若是从“拍照”返回
-            case TAKE_PHOTO:
+            case ReturnFromActivity_TAKE_PHOTO:
                 //若拍照成功
                 if (resultCode == RESULT_OK) {
                     try{
                         //调用BitmapFactory.decodeStream方法，将“相机拍摄后保存的照片路径Uri”指定的照片
                         //解析成Bitmap对象
-                        bitmap = BitmapFactory.decodeStream(getContentResolver().openInputStream(imageUri));
+                        bitmap_original = BitmapFactory.decodeStream(getContentResolver().openInputStream(imageUri));
                         Log.d(TAG, "拍照后的imageUri="+imageUri);
                         //在ImageView中显示这张照片
-                        imgShow.setImageBitmap(bitmap);
+                        imgShow.setImageBitmap(bitmap_original);
 
                         //将这个临时照片保存
-                        String str = saveImageBitmap(bitmap);
+                        String str = saveImageBitmap(bitmap_original);
                         Toast.makeText(MainActivity.this, "照片已保存:"+str, Toast.LENGTH_LONG).show();
 
                     } catch (FileNotFoundException e) {
                         e.printStackTrace();
                     }
+                }
+                break;
+
+            //若是从“GPS”返回
+            case ReturnFromActivity_GPS:
+                if (checkGPSIsOpen()){
+                    Toast.makeText(MainActivity.this, "GPS已使能", Toast.LENGTH_LONG).show();
+                }
+                else{
+                    Toast.makeText(MainActivity.this, "GPS没有使能！", Toast.LENGTH_LONG).show();
                 }
                 break;
 
@@ -349,197 +391,31 @@ public class MainActivity extends AppCompatActivity {
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         //传入“相机拍摄后保存的照片路径Uri”
         intent.putExtra(MediaStore.EXTRA_OUTPUT, imageUri);
-        startActivityForResult(intent, TAKE_PHOTO);
+        startActivityForResult(intent, ReturnFromActivity_TAKE_PHOTO);
         Log.d(TAG, "调用系统拍照程序");
     }
 
-    public void printHexString(String hint, byte[] b) {
-        Log.d(TAG, hint);
-        int byte_c = 0;
-        int line_c = 0;
-        String str ="";
 
-        str += "第"+line_c+"行：";
-        for (int i = 0; i < b.length; i++) {
-            String hex = Integer.toHexString(b[i] & 0xFF);
-            if (hex.length() == 1){
-                hex = '0' + hex;
-            }
-            str += hex.toUpperCase() + " ";
-            byte_c += 1;
-            if(byte_c>=16) {
-                Log.d(TAG, str);
-                byte_c = 0;
-                line_c += 1;
-                str = "第"+line_c+"行：";;
-            }
-        }
-        Log.d(TAG,"");
-    }
 
 
 
     private String saveImageBitmap(Bitmap bmp) {
-        //将这个临时照片保存
-        //定义路径=“Android内置的外部存储器的路径/DCIM/Fj”
-        String fileDir = FileUtils.getInStoragePath(MainActivity.this) + "/DCIM/Fj";
-        //定义路径=“Android外置的外部存储器的路径/DCIM/Fj”
-        //String fileDir = FileUtils.getOutStoragePath(MainActivity.this) + "/DCIM/Fj";
-        //创建文件夹，若已存在则返回false，但不影响后续操作
-        boolean bl =  FileUtils.createFolder(fileDir);
-        if(bl){
-            Log.d(TAG, "创建文件夹成功！");
-        }
-        else {
-            Log.d(TAG, "创建文件夹失败");
-        }
-
-        //定义文件名称=“FjPhoto当前时间.jpg”
-        String fileName = "FjPhoto" + TimeUtils.format(System.currentTimeMillis()) + ".jpg";
-        //根据路径及文件名，创建文件对象
-        File file = new File(fileDir, fileName);
-
-        Log.d(TAG, "fileDir="+fileDir);
-        Log.d(TAG, "file=" + file);
-        FileOutputStream fout = null;
-        try {
-            //创建文件输出流对象
-            fout = new FileOutputStream(file);
-            //将Bitmap压缩成JPEG格式保存到指定的文件输出流对象中
-            bmp.compress(Bitmap.CompressFormat.JPEG, 100, fout);
+        //创建自定义的FJ名称的文件
+        File file = BitmapQuMo.creatBmpFile(TAG, MainActivity.this);
+        //将入口传入的bmp保存为JPEG格式的文件
+        boolean save = ImageUtils.save(bmp, file, JPEG);
+        if(save){
             Log.d(TAG, "图片保存成功");
-
-            //通过Intent通知，启动MediaScanner服务
-            Intent intent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
-            //获得指定图片文件的Uri对象
-            Uri uri = Uri.fromFile(file);
-            //将Uri对象添加到Intent中，即告知MediaScanner，需要扫描的文件
-            intent.setData(uri);
-            //通过广播发送Intent
-            MainActivity.this.sendBroadcast(intent);
-
-            return fileName;
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-        } finally {
-            try {
-                fout.flush();
-                fout.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            //启动MediaScanner服务，通知它扫描入口指定的文件
+            FjIntentUtils.actionMediaScanFileIntent(MainActivity.this, file);
+            //return fileName;
+            return file.getName();
         }
         return "保存失败";
     }
 
-    private byte[] getBitmapBytes(Bitmap bmp) {
-        int width = bmp.getWidth(); // 获取位图的宽
-        int height = bmp.getHeight(); // 获取位图的高
-        int[] pixels = new int[width * height]; // 通过位图的大小创建像素点数组
-        byte[] byte_pixel = new byte[width * height/8];
 
 
-        //将bmp中的各个像素点读取到pixels数组中，便于后续处理
-        //getPixels本身非常非常简单，就是一个拷贝的过程。
-        //关键：拷贝的话，就涉及到2个因素，从哪里来，到哪里去？
-        //这里的x, y, width, height是属于从哪里来的参数，也就是我们控制怎样读取mBitmap1的参数
-        //offset, stride是到哪里去的参数，也就是控制如何放入到pixels[]中去的参数
-        //offset是目标内存的起始地址的偏移量，stride是目标内存中隔多少个Pixels再写下一行；
-        bmp.getPixels(pixels, 0, width, 0, 0, width, height);
-
-        //设定1个字节的位数=0
-        int bit_c = 0;
-        int byte_c = 0;
-        //遍历pixels数组中的像素点（相对图片来说，是从左往右，从上到下）
-
-        for (int i = 0; i < height; i++) {
-            for (int j = 0; j < width; j++) {
-                int grey = pixels[width * i + j];
-
-                //获取每个像素点的RGB组合值
-                int rgb = (grey & 0x00FFFFFF);
-
-                switch (bit_c) {
-                    //若是bit0
-                    case 0:
-                        if (rgb == 0) {
-                            byte_pixel[byte_c] |= 0x01;
-                        } else {
-                            byte_pixel[byte_c] &= 0xFE;
-                        }
-                        bit_c += 1;
-                        break;
-
-                    //若是bit1
-                    case 1:
-                        if (rgb == 0) {
-                            byte_pixel[byte_c] |= 0x02;
-                        } else {
-                            byte_pixel[byte_c] &= 0xFD;
-                        }
-                        bit_c += 1;
-                        break;
-
-                    case 2:
-                        if (rgb == 0) {
-                            byte_pixel[byte_c] |= 0x04;
-                        } else {
-                            byte_pixel[byte_c] &= 0xFB;
-                        }
-                        bit_c += 1;
-                        break;
-
-                    case 3:
-                        if (rgb == 0) {
-                            byte_pixel[byte_c] |= 0x08;
-                        } else {
-                            byte_pixel[byte_c] &= 0xF7;
-                        }
-                        bit_c += 1;
-                        break;
-
-                    case 4:
-                        if (rgb == 0) {
-                            byte_pixel[byte_c] |= 0x10;
-                        } else {
-                            byte_pixel[byte_c] &= 0xEF;
-                        }
-                        bit_c += 1;
-                        break;
-
-                    case 5:
-                        if (rgb == 0) {
-                            byte_pixel[byte_c] |= 0x20;
-                        } else {
-                            byte_pixel[byte_c] &= 0xDF;
-                        }
-                        bit_c += 1;
-                        break;
-
-                    case 6:
-                        if (rgb == 0) {
-                            byte_pixel[byte_c] |= 0x40;
-                        } else {
-                            byte_pixel[byte_c] &= 0xBF;
-                        }
-                        bit_c += 1;
-                        break;
-
-                    case 7:
-                        if (rgb == 0) {
-                            byte_pixel[byte_c] |= 0x80;
-                        } else {
-                            byte_pixel[byte_c] &= 0x7F;
-                        }
-                        bit_c = 0;
-                        byte_c += 1;
-                        break;
-                }
-            }
-        }
-        return byte_pixel;
-
-    }
 
     //将用户在相册中选中的图片显示在ImageView控件上
     @TargetApi(19)
@@ -588,98 +464,7 @@ public class MainActivity extends AppCompatActivity {
         return path;
     }
 
-    /**
-     * 将彩色图转换为纯黑白二色
-     *
-     * @param bmp
-     * @return 返回转换好的位图
-     */
-    public static Bitmap convertToBlackWhite(Bitmap bmp, int yuzhi) {
-        int width = bmp.getWidth(); // 获取位图的宽
-        int height = bmp.getHeight(); // 获取位图的高
-        int[] pixels = new int[width * height]; // 通过位图的大小创建像素点数组
 
-        //将bmp中的各个像素点读取到pixels数组中，便于后续处理
-        //getPixels本身非常非常简单，就是一个拷贝的过程。
-        //关键：拷贝的话，就涉及到2个因素，从哪里来，到哪里去？
-        //这里的x, y, width, height是属于从哪里来的参数，也就是我们控制怎样读取mBitmap1的参数
-        //offset, stride是到哪里去的参数，也就是控制如何放入到pixels[]中去的参数
-        //offset是目标内存的起始地址的偏移量，stride是目标内存中隔多少个Pixels再写下一行；
-        bmp.getPixels(pixels, 0, width, 0, 0, width, height);
-
-        //设定转换为黑白色的阈值
-        int tmp = yuzhi;//100;
-        //设定透明度为固定值=0xFF
-        int alpha = 0xFF << 24;
-        //遍历pixels数组中的像素点（相对图片来说，是从左往右，从上到下）
-        for (int i = 0; i < height; i++) {
-            for (int j = 0; j < width; j++) {
-                int grey = pixels[width * i + j];
-
-                //将每个像素点的RGB分离出来
-                alpha = ((grey & 0xFF000000) >> 24);
-                int red = ((grey & 0x00FF0000) >> 16);
-                int green = ((grey & 0x0000FF00) >> 8);
-                int blue = (grey & 0x000000FF);
-
-                if (red > tmp) {
-                    red = 255;
-                } else {
-                    red = 0;
-                }
-                if (blue > tmp) {
-                    blue = 255;
-                } else {
-                    blue = 0;
-                }
-                if (green > tmp) {
-                    green = 255;
-                } else {
-                    green = 0;
-                }
-
-                //转换为黑白色
-                grey = alpha << 24 | red << 16 | green << 8 | blue;
-                //若本像素点=0xFFFFFFFF，则认为是白色
-                if (grey == 0xFFFFFFFF){//-1) {
-                    grey = 0xFFFFFFFF;//-1;
-                }
-                //否则认为是黑色
-                else {
-                    grey = 0xFF000000;//-16777216;
-                }
-
-//                //转化成灰度像素
-//                grey = (int) (red * 0.3 + green * 0.59 + blue * 0.11);
-//                grey = alpha | (grey << 16) | (grey << 8) | grey;
-                pixels[width * i + j] = grey;
-            }
-        }
-        //新建图片
-        //Bitmap newBmp = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
-        //Bitmap newBmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        Bitmap newBmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        //设置图片数据
-        newBmp.setPixels(pixels, 0, width, 0, 0, width, height);
-
-// Matrix类进行图片处理（缩小或者旋转）
-        Matrix matrix = new Matrix();
-        // 缩小一倍
-        float x = (float) 128*4/width;
-        float y = (float) 64*4/height;
-        Log.d(TAG, "x="+x+" y="+y);
-        matrix.postScale(x, y);
-        // 生成新的图片
-        Bitmap result = Bitmap.createBitmap(newBmp, 0, 0, newBmp.getWidth(),
-                newBmp.getHeight(), matrix, true);
-
-
-        return result;
-        //Bitmap resizeBmp = ThumbnailUtils.extractThumbnail(newBmp, width, height);
-        //Bitmap resizeBmp = ThumbnailUtils.extractThumbnail(newBmp, 380, 460);
-        //Bitmap resizeBmp = ThumbnailUtils.extractThumbnail(newBmp, 128*4, 64*4);
-        //return resizeBmp;
-    }
 
     //检测指纹认证的信息及环境
     private String preFP(){
@@ -695,6 +480,14 @@ public class MainActivity extends AppCompatActivity {
         stringBuilder.append("isKeyguardSecure : "+mManager.isKeyguardSecure());
         stringBuilder.append("\n");
 
+        stringBuilder.append("厂家="+DeviceUtils.getManufacturer()+"\n型号="+DeviceUtils.getModel());
+        stringBuilder.append("\n");
+
+        stringBuilder.append("国家="+ CountryUtils.getCountryBySim());
+        stringBuilder.append("\n");
+
+
+
         string = stringBuilder.toString();
 
         return string;
@@ -709,8 +502,39 @@ public class MainActivity extends AppCompatActivity {
         if (result) {
             mManager.authenticate(new BiometricPromptManager.OnBiometricIdentifyCallback() {
                 @Override
+                //点击“改用密码”
                 public void onUsePassword() {
                     Toast.makeText(MainActivity.this, "onUsePassword", Toast.LENGTH_SHORT).show();
+                    LayoutInflater factory = LayoutInflater.from(MainActivity.this);
+                    final View v1 = factory.inflate(R.layout.dialog_password, null);
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("请输入密码")
+                            //.setMessage("当前手机扫描蓝牙需要打开定位功能")
+                            .setView(v1)
+                            //若按下“取消键”则直接finish()
+                            .setNegativeButton("取消",
+                                    new DialogInterface.OnClickListener() {
+                                        @Override
+                                        public void onClick(DialogInterface dialog, int which) {
+
+                                        }
+                                    })
+                            //若按下“前往设置”则
+                            .setPositiveButton("确认",
+                                    new DialogInterface.OnClickListener() {
+                                        @Override
+                                        public void onClick(DialogInterface dialog, int which) {
+                                            EditText passwd = (EditText)v1.findViewById(R.id.editText_password);
+                                            String passWordStr1 = passwd.getText().toString();
+                                            String passWordStr2 = SPUtils.getInstance().getString("PASSWORD");
+                                            Toast.makeText(MainActivity.this, "你输入的密码是："+passWordStr1+"\n正确密码是："+passWordStr2, Toast.LENGTH_SHORT).show();
+
+                                        }
+                                    })
+                            //不显示第三个按键
+                            .setCancelable(false)
+                            //显示对话框
+                            .show();
                 }
 
                 @Override

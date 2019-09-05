@@ -67,7 +67,7 @@ public class BiometricPromptDialog extends DialogFragment {
         mUsePasswordBtn = view.findViewById(R.id.use_password_btn);
         mCancelBtn = view.findViewById(R.id.cancel_btn);
 
-        mUsePasswordBtn.setVisibility(View.GONE);
+        mUsePasswordBtn.setVisibility(View.VISIBLE );//(View.GONE);
         mUsePasswordBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
